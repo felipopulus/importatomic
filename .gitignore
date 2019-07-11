@@ -1,0 +1,29 @@
+# --------------------------------------------------
+# PACKAGES
+# --------------------------------------------------
+# Folders
+/build/
+/temp/
+
+# Python
+*.pyc
+*.pyo
+
+
+# --------------------------------------------------
+# WINDOWS
+# --------------------------------------------------
+# Thumbnail Cache Files
+Thumbs.db
+thumbs.db
+
+# Installer Files
+*.cab
+*.msi
+*.msm
+*.msp
+
+# Shortcuts
+*.lnk
+
+\.idea/

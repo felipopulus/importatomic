@@ -1,4 +1,5 @@
 from Katana import weakref, itertools, Utils, NodegraphAPI, UniqueName
+from Constants import ParamEnum
 import logging
 
 log = logging.getLogger('Importatomic.Node')
@@ -20,6 +21,10 @@ class ImportatomicNode(NodegraphAPI.SuperTool):
         subGroup.getOutputPortByIndex(0).connect(self.getReturnPort('default'))
         merge = NodegraphAPI.CreateNode('Merge', subGroup)
         merge.getOutputPortByIndex(0).connect(subGroup.getReturnPort('out'))
+
+    def getNodeVersion(self):
+        version = self.getParameterValue(ParamEnum.kNodeVersion, 0)
+        return version
 
     def polish(self):
         pass

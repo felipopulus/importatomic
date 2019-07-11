@@ -59,11 +59,11 @@ class AssetModule(object):
         if not assetName and not param:
             return
         if not param:
-            node.getParameters().parseXML("\n"
-                                          "<group_parameter>\n"
-                                          "<string_parameter name='%s'/>\n"
-                                          "</group_parameter>\n" % paramName
-                                          )
+            node.getParameters().parseXML("\n<group_parameter>"
+                                          "\n<string_parameter name='%s' "
+                                          "hints='{&apos;widget&apos;: &apos;null&apos;}'/>"
+                                          "\n</group_parameter>"
+                                          "\n" % paramName)
             param = node.getParameter(paramName)
         if param.getValue(0) == assetName:
             return
@@ -124,6 +124,12 @@ class AssetModule(object):
         return hasBatchCreateCallback
 
     @classmethod
+    def GetBatchCreateCallback(cls):
+        result = cls.__batchAddCallbacks.keys()
+        result.sort()
+        return result
+
+    @classmethod
     def RegisterUtilCallback(cls, name, callback):
         cls.__utilCallbacks[name] = callback
 
@@ -135,8 +141,8 @@ class AssetModule(object):
 
     def setItemState(self, node, item):
         item.setText(NAME_COLUMN, node.getName())
-        item.setText(TYPE_COLUMN, node.getType())
-        item.setText(STATUS_COLUMN, '')
+        # item.setText(TYPE_COLUMN, node.getType())
+        # item.setText(STATUS_COLUMN, '')
         log.debug('setItemState(): node = %s' % node.getName())
 
     def getEditor(self, node, widgetParent):
@@ -150,7 +156,7 @@ class AssetModule(object):
         pass
 
     def getPrimarySpref(self, node):
-        return
+        return None
 
     def setPrimarySprefVersion(self, node, version):
         pass
@@ -172,7 +178,7 @@ class AssetModule(object):
         pass
 
     def getAssetTreeRoot(self, node):
-        return
+        return None
 
 
 class AssetTreeChild(object):
@@ -187,7 +193,7 @@ class AssetTreeChild(object):
         return False
 
     def getAssetId(self):
-        return
+        return None
 
     def setAssetId(self, assetId):
         pass
@@ -205,7 +211,7 @@ class AssetTreeChild(object):
         return False
 
     def getEditor(self, widgetParent):
-        return
+        return None
 
     def getItemKey(self):
         return self
@@ -242,6 +248,9 @@ class AssetTreeChild(object):
 
     def getCustomVersionTagNames(self):
         return []
+
+    def hasError(self):
+        return False
 
 
 def _GetHideTitlePolicy():

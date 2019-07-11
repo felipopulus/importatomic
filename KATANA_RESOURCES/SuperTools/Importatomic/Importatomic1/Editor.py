@@ -1,7 +1,7 @@
-from Katana import os, Utils, QtCore, QtGui, QtWidgets, UI4, QT4FormWidgets, Callbacks, AssetAPI
-from Katana import NodegraphAPI
-from UI4 import Widgets
+from Katana import os, Utils, QtCore, QtGui, QtWidgets, UI4, QT4FormWidgets, Callbacks, AssetAPI, NodegraphAPI
 import UI4
+from UI4 import Widgets
+from UI4.FormMaster.Editors import PolicyFindPopup
 from AssetModule import *
 from Constants import *
 import logging
@@ -10,42 +10,92 @@ log = logging.getLogger('Importatomic.Editor')
 
 class ImportatomicEditor(QtWidgets.QWidget):
     def __init__(self, parent, node):
-        self.__node = node
+        self.node = node
+        self.nodeVersion = node.getNodeVersion()
+
+        # Initialize widget
         QtWidgets.QWidget.__init__(self, parent)
+
+        # Hide Original SuperTool Search Button
+        search_button = self.__findSearchButton()
+        if search_button is not None:
+            search_button.setParent(None)
+
+        # Main Layout
         mainLayout = QtWidgets.QVBoxLayout(self)
+        mainLayout.setSpacing(0)
+
+        # Menu Bar
         self.__menuBar = QtWidgets.QMenuBar(self)
         self.__addMenu = self.__menuBar.addMenu(UI4.Util.IconManager.GetIcon('Icons/plus16.png'), 'Add')
         self.__addMenu.aboutToShow.connect(self.__addMenuAboutToShow)
         self.__addMenu.triggered.connect(self.__addMenuTriggered)
+        self.__cacheMenu = self.__menuBar.addMenu("Caching System")
+        self.__cacheMenu.aboutToShow.connect(self.__addMenuAboutToShow)
+        self.__cacheMenu.triggered.connect(self.__addMenuTriggered)
+
+        # Top-Right Search Button
+        self.search_button = UI4.Widgets.FilterablePopupButton(self.__menuBar)
+        self.search_button.setIcon(UI4.Util.IconManager.GetIcon('Icons/find20.png'))
+        self.search_button.setIconSize(UI4.Util.IconManager.GetSize('Icons/find20.png'))
+        self.search_button.setFlat(True)
+        self.search_button.setFocusPolicy(QtCore.Qt.NoFocus)
+        self.search_button.setButtonType('smallToolbar')
+        self.search_button.aboutToShow.connect(self.__searchPopupShow)
+        self.search_button.itemChosen.connect(self.__searchPopupChosen)
+        self.__menuBar.setCornerWidget(self.search_button, QtCore.Qt.TopRightCorner)
+
         mainLayout.setMenuBar(self.__menuBar)
-        mainLayout.setSpacing(0)
+
+        # Main Frame where the tree widget will reside
         self.__listContainer = QtWidgets.QFrame(self)
         mainLayout.addWidget(self.__listContainer)
         self.__listStretchBox = UI4.Widgets.StretchBox(self.__listContainer, allowHorizontal=False, allowVertical=True)
-        self.__tree = UI4.Widgets.SortableTreeWidget(None)
+
+        # Main Tree Widget
+        self.tree = UI4.Widgets.SortableTreeWidget(None)
+        self.tree.setAutoScroll(False)
+        self.tree.setExpandsOnDoubleClick(False)
+        self.suppressor = self.tree.getUpdateSuppressor()
+
         self.__versionPopup = Widgets.FilterablePopup()
         self.__lastTreePos = QtCore.QPoint(0, 0)
-        self.__listStretchBox.layout().addWidget(self.__tree)
+        self.__listStretchBox.layout().addWidget(self.tree)
         self.__listStretchBox.setMinHeight(160)
         self.__listStretchBox.setFixedHeight(160)
         mainLayout.addWidget(self.__listStretchBox)
-        self.__headerLabels = ['Name', 'Type', 'Version', 'Resolved Version', 'Status']
-        self.__tree.setColumnCount(len(self.__headerLabels))
-        self.__tree.setHeaderLabels(self.__headerLabels)
-        self.__tree.header().setSectionsClickable(False)
-        self.__tree.setSelectionMode(self.__tree.ExtendedSelection)
-        self.__tree.setRootIsDecorated(True)
-        self.__tree.setDraggable(True)
-        self.__tree.setAllColumnsShowFocus(True)
-        self.__tree.header().setSectionResizeMode(QtWidgets.QHeaderView.ResizeToContents)
-        self.__tree.setMinimumHeight(128)
-        self.__tree.dragMoveEventSignal.connect(self.__dragMoveEventCallback)
-        self.__tree.dropEventSignal.connect(self.__dropEventCallback)
-        self.__tree.aboutToDrag.connect(self.__aboutToDragCallback)
-        self.__tree.itemSelectionChanged.connect(self.__selectionChanged)
-        self.__tree.mousePressEventSignal.connect(self.__listMousePressEvent)
-        self.__tree.keyPressEventSignal.connect(self.__listKeyPressCallback)
+
+        # Headers
+        self.__headerLabels = [' Name', ' Task', ' Version', ' Finalable', ' Prman Version', ' Shot']
+
+        self.tree.setColumnCount(len(self.__headerLabels))
+        self.tree.setHeaderLabels(self.__headerLabels)
+        # self.tree.header().setSectionsClickable(False)
+        self.tree.setSelectionMode(self.tree.ExtendedSelection)
+        self.tree.setRootIsDecorated(True)
+        self.tree.setDraggable(True)
+        self.tree.setAllColumnsShowFocus(True)
+        self.tree.setMinimumHeight(128)
+        self.tree.setUniformRowHeights(True)
+        self.tree.setSortingEnabled(False)  # TODO: Context menu for sorting
+        self.tree.setMultiDragEnabled(True)
+
+        # ResizeToContents makes the UI slow, we'll make it manual, not a big deal
+        # self.tree.header().setSectionResizeMode(QtWidgets.QHeaderView.ResizeToContents)
+        self.tree.header().setSectionResizeMode(QtWidgets.QHeaderView.Interactive)
+        self.tree.header().resizeSection(0, 200)
+        # self.tree.header().setSortIndicator(NAME_COLUMN, QtCore.Qt.AscendingOrder)
+
+        self.tree.dragMoveEventSignal.connect(self.__dragMoveEventCallback)
+        self.tree.dropEventSignal.connect(self.__dropEventCallback)
+        self.tree.aboutToDrag.connect(self.__aboutToDragCallback)
+        self.tree.itemSelectionChanged.connect(self.__selectionChanged)
+        self.tree.mousePressEventSignal.connect(self.__listMousePressEvent)
+        self.tree.doubleClicked.connect(self.__doubleClick)
+        self.tree.keyPressEventSignal.connect(self.__listKeyPressCallback)
         self.__versionPopup.itemChosen.connect(self.__popupVersionsItemChosen)
+
+        # Editor Status Widget
         self.__selectionStateDisplay = EditorStatusWidget(self)
         mainLayout.addWidget(self.__selectionStateDisplay)
         self.__selectionStateDisplay.customNameStateChange.connect(self.__customNameStateChanged)
@@ -65,9 +115,78 @@ class ImportatomicEditor(QtWidgets.QWidget):
         self.__currentDisplayWidget = None
         return
 
-    __EVENTNAMES = ('cacheManager_flush', 'parameter_finalizeValue', 'port_disconnect',
-                    'port_connect', 'node_renameOutputPort', 'node_setBypassed',
+    __EVENTNAMES = ('cacheManager_flush',
+                    'parameter_finalizeValue',
+                    'port_disconnect',
+                    'port_connect',
+                    'node_renameOutputPort',
+                    'node_setBypassed',
                     'nodegraph_defaultPluginsChanged')
+
+    # ######################################### #
+    # ################## API ################## #
+    # ######################################### #
+
+    def getTopLevelItems(self):
+        top_level_items = []
+        for index in range(self.tree.topLevelItemCount()):
+            item = self.tree.topLevelItem(index)
+            for child_count in range(item.childCount()):
+                child_item = item.child(child_count)
+                top_level_items.append(child_item)
+        return top_level_items
+
+    def getAllChildItems(self, items):
+        child_items = items[:]
+        for item in items:
+            for i in range(item.childCount()):
+                child_item = item.child(i)
+                child_items.append(child_item)
+                if child_item.childCount() != 0:
+                    child_items.extend(self.getAllChildItems([child_item]))
+        return child_items
+
+    # ######################################### #
+    # ########### Internal Commands ########### #
+    # ######################################### #
+
+    def __findSearchButton(self):
+        try:
+            for widget in self.parent().parent().children():
+                if isinstance(widget, PolicyFindPopup.PolicyFindPopupButton):
+                    return widget
+            return None
+        except AttributeError:
+            return None
+
+    def __searchPopupShow(self):
+        self.search_button.clear()
+        no_duplicates = []
+        for item in self.getTopLevelItems():
+            node = item.getItemData().get("node")
+            if node is None:
+                continue
+            text = str(item.text(0))
+            if text in no_duplicates:
+                continue
+            self.search_button.addItem(text)
+            no_duplicates.append(text)
+
+    def __searchPopupChosen(self, text, metadata):
+        items_to_select = []
+        for item in self.getTopLevelItems():
+            if text == str(item.text(0)):
+                items_to_select.append(item)
+
+        if not items_to_select:
+            return
+
+        self.tree.clearSelection()
+
+        for item in items_to_select:
+            item.setSelected(True)
+
+        self.tree.scrollToItem(items_to_select[0])
 
     def __registerEvents(self):
         for name in self.__EVENTNAMES:
@@ -93,7 +212,7 @@ class ImportatomicEditor(QtWidgets.QWidget):
 
     def __nodeIsMine(self, node):
         while node:
-            if node == self.__node:
+            if node == self.node:
                 return True
             if hash(node) in self.__additionalObservedNodes:
                 return True
@@ -124,7 +243,7 @@ class ImportatomicEditor(QtWidgets.QWidget):
                             update = True
                     else:
                         if eventType == 'node_renameOutputPort':
-                            if kwargs['node'] == self.__node:
+                            if kwargs['node'] == self.node:
                                 update = True
                         else:
                             if eventType == 'nodegraph_defaultPluginsChanged':
@@ -164,17 +283,17 @@ class ImportatomicEditor(QtWidgets.QWidget):
     def __updateList(self):
         self.__rebuilding = True
         self.__primaryProductDict = {}
-        horzScrollbar = self.__tree.horizontalScrollBar()
+        horzScrollbar = self.tree.horizontalScrollBar()
         if horzScrollbar and horzScrollbar.isVisible():
             posx = horzScrollbar.value()
         else:
             horzScrollbar = None
-        vertScrollbar = self.__tree.verticalScrollBar()
+        vertScrollbar = self.tree.verticalScrollBar()
         if vertScrollbar and vertScrollbar.isVisible():
             posy = vertScrollbar.value()
         else:
             vertScrollbar = None
-        selectedTable, openTable = self.__tree.getExpandedAndSelectionTables()
+        selectedTable, openTable = self.tree.getExpandedAndSelectionTables()
         selectedKeys = set((x.getItemData().get('key') for x in selectedTable.itervalues()))
         if self.__preselect:
             selectedKeys = self.__preselect[:]
@@ -185,16 +304,16 @@ class ImportatomicEditor(QtWidgets.QWidget):
 
         self.__additionalObservedNodes.clear()
         self.__addObserverNode(NodegraphAPI.GetRootNode())
-        self.__tree.clear()
-        for port in self.__node.getOutputPorts():
+        self.tree.clear()
+        for port in self.node.getOutputPorts():
             outputName = port.getName()
-            outputItem = UI4.Widgets.SortableTreeWidgetItem(self.__tree, outputName)
+            outputItem = UI4.Widgets.SortableTreeWidgetItem(self.tree, outputName)
             outputItem.setIcon(0, UI4.Util.IconManager.GetIcon('Icons/port16.png'))
             outputItem.setItemData({'type': 'output', 'port': port, 'key': port})
             outputItem.setExpanded(openState.get(port, True))
             if port in selectedKeys:
                 outputItem.setSelected(True)
-            for node in self.__node.getProductStructureForOutput(outputName):
+            for node in self.node.getProductStructureForOutput(outputName):
                 handler = AssetModule.GetHandlerForNode(node)
                 rootAsset = handler.getAssetTreeRoot(node)
                 if rootAsset:
@@ -284,7 +403,7 @@ class ImportatomicEditor(QtWidgets.QWidget):
     def __selectionChanged(self):
         if self.__rebuilding:
             return
-        selectedItems = self.__tree.selectedItems()
+        selectedItems = self.tree.selectedItems()
         if not selectedItems:
             self.__clearParameterArea()
             self.__selectionStateDisplay.update('', None)
@@ -329,7 +448,7 @@ class ImportatomicEditor(QtWidgets.QWidget):
                 handler = AssetModule.GetHandlerForNode(itemKey)
                 editor = handler.getEditor(itemKey, self.__parameterDisplayArea)
             elif isinstance(itemKey, NodegraphAPI.Port):
-                editor = PortEditorWidget(self.__parameterDisplayArea, self.__node, itemKey.getName())
+                editor = PortEditorWidget(self.__parameterDisplayArea, self.node, itemKey.getName())
         if editor:
             editor.show()
             self.__parameterDisplayArea.layout().addWidget(editor)
@@ -356,9 +475,9 @@ class ImportatomicEditor(QtWidgets.QWidget):
     def __addMenuTriggered(self, action):
         name = str(action.text())
         Utils.UndoStack.OpenGroup('%s In %s' % (
-         name, self.__node.getName()))
+         name, self.node.getName()))
         try:
-            result = AssetModule.TriggerCreateCallback(name, self.__node)
+            result = AssetModule.TriggerCreateCallback(name, self.node)
             if isinstance(result, NodegraphAPI.Node):
                 result = [
                  result]
@@ -370,7 +489,7 @@ class ImportatomicEditor(QtWidgets.QWidget):
                 includedNodes.append(node)
 
             portName = 'default'
-            selectedItems = self.__tree.selectedItems()
+            selectedItems = self.tree.selectedItems()
             if selectedItems:
                 item = selectedItems[0]
                 while item.parent():
@@ -378,11 +497,11 @@ class ImportatomicEditor(QtWidgets.QWidget):
 
                 portName = item.getItemData()['port'].getName()
             for node in includedNodes:
-                self.__node.insertNodeIntoOutputMerge(node, portName, -1)
+                self.node.insertNodeIntoOutputMerge(node, portName, -1)
 
             if includedNodes:
-                self.__node.layoutContents()
-            AssetModule.TriggerPostCreateCallback(name, self.__node, includedNodes)
+                self.node.layoutContents()
+            AssetModule.TriggerPostCreateCallback(name, self.node, includedNodes)
             self.__preselect = includedNodes[:]
         except Exception as exception:
             log.exception('Error in callback of menu item action "%s": %s' % (
@@ -391,17 +510,17 @@ class ImportatomicEditor(QtWidgets.QWidget):
             Utils.UndoStack.CloseGroup()
 
     def __addOutputCallback(self):
-        Utils.UndoStack.OpenGroup('Add Output To %s' % self.__node.getName())
+        Utils.UndoStack.OpenGroup('Add Output To %s' % self.node.getName())
         try:
-            self.__node.addOutput('out')
-            self.__node.layoutContents()
+            self.node.addOutput('out')
+            self.node.layoutContents()
         finally:
             Utils.UndoStack.CloseGroup()
 
     def __dragMoveEventCallback(self, event, parent, index, callbackRecord):
-        if event.source() != self.__tree:
+        if event.source() != self.tree:
             return
-        dragItems = self.__tree.getDragItems()
+        dragItems = self.tree.getDragItems()
         if not dragItems:
             return
         dragItem = dragItems[0]
@@ -420,7 +539,7 @@ class ImportatomicEditor(QtWidgets.QWidget):
 
             return
         if dragItem.parent() == parent:
-            dragIndex = self.__tree.findItemLocalIndex(dragItem)
+            dragIndex = self.tree.findItemLocalIndex(dragItem)
             if index == dragIndex or index == dragIndex + 1:
                 return
         if dragItem.parent():
@@ -435,7 +554,7 @@ class ImportatomicEditor(QtWidgets.QWidget):
                 return
             if index == 0:
                 return
-            if dragItem == self.__tree.topLevelItem(0):
+            if dragItem == self.tree.topLevelItem(0):
                 return
             callbackRecord.accept()
             return (
@@ -448,13 +567,13 @@ class ImportatomicEditor(QtWidgets.QWidget):
             name = itemData['node'].getName()
         else:
             if 'port' in itemData:
-                name = (' ').join((x.getName() for x in self.__node.getProductStructureForOutput(itemData['port'].getName())))
+                name = (' ').join((x.getName() for x in self.node.getProductStructureForOutput(itemData['port'].getName())))
             else:
                 if itemData.get('type') == 'assetTree':
                     name = ''
                     mimeType = 'importatomic/assettree'
                 else:
-                    name = self.__node.getName()
+                    name = self.node.getName()
         data = dragObject.mimeData()
         if not data:
             data = QtCore.QMimeData()
@@ -463,9 +582,9 @@ class ImportatomicEditor(QtWidgets.QWidget):
             dragObject.setMimeData(data)
 
     def __dropEventCallback(self, event, parent, index):
-        if event.source() != self.__tree:
+        if event.source() != self.tree:
             return
-        dragItems = self.__tree.getDragItems()
+        dragItems = self.tree.getDragItems()
         if not dragItems:
             return
         dragItem = dragItems[0]
@@ -484,17 +603,17 @@ class ImportatomicEditor(QtWidgets.QWidget):
 
             return
         toIndex = index
-        fromIndex = self.__tree.findItemLocalIndex(dragItem)
+        fromIndex = self.tree.findItemLocalIndex(dragItem)
         if not dragItem.parent():
             if parent:
                 return
-            Utils.UndoStack.OpenGroup('Reorder Output Of %s' % self.__node.getName())
+            Utils.UndoStack.OpenGroup('Reorder Output Of %s' % self.node.getName())
             try:
-                self.__node.reorderOutput(fromIndex, toIndex)
-                self.__node.layoutContents()
+                self.node.reorderOutput(fromIndex, toIndex)
+                self.node.layoutContents()
             except Exception as exception:
                 log.exception('Error reordering output of "%s" node: %s' % (
-                 self.__node.getName(), str(exception)))
+                    self.node.getName(), str(exception)))
             finally:
                 Utils.UndoStack.CloseGroup()
 
@@ -505,21 +624,21 @@ class ImportatomicEditor(QtWidgets.QWidget):
             if not node:
                 return
             outputName = str(parent.text(NAME_COLUMN))
-            Utils.UndoStack.OpenGroup('Reorder Output In %s' % self.__node.getName())
+            Utils.UndoStack.OpenGroup('Reorder Output In %s' % self.node.getName())
             if fromIndex < toIndex:
                 toIndex = toIndex - 1
             try:
-                self.__node.removeNodeFromOutputMerge(node)
-                self.__node.insertNodeIntoOutputMerge(node, outputName, toIndex)
-                self.__node.layoutContents()
+                self.node.removeNodeFromOutputMerge(node)
+                self.node.insertNodeIntoOutputMerge(node, outputName, toIndex)
+                self.node.layoutContents()
             except Exception as exception:
                 log.exception('Error reordering output in "%s" node: %s' % (
-                 self.__node.getName(), str(exception)))
+                    self.node.getName(), str(exception)))
             finally:
                 Utils.UndoStack.CloseGroup()
 
     def __getSingleSelectedAssetItemAndNode(self):
-        selectedItems = self.__tree.selectedItems()
+        selectedItems = self.tree.selectedItems()
         if len(selectedItems) > 1:
             return (None, None)
         item = selectedItems[0]
@@ -533,7 +652,7 @@ class ImportatomicEditor(QtWidgets.QWidget):
         if not node:
             return
         Utils.UndoStack.OpenGroup('%s Custom Asset Name In %s' % (
-         ('Disable', 'Enable')[state], self.__node.getName()))
+         ('Disable', 'Enable')[state], self.node.getName()))
         try:
             if state:
                 AssetModule.SetCustomAssetName(node, str(item.text(NAME_COLUMN)))
@@ -546,7 +665,7 @@ class ImportatomicEditor(QtWidgets.QWidget):
         item, node = self.__getSingleSelectedAssetItemAndNode()
         if not node:
             return
-        Utils.UndoStack.OpenGroup('Change Custom Asset Name In %s' % (self.__node.getName(),))
+        Utils.UndoStack.OpenGroup('Change Custom Asset Name In %s' % (self.node.getName(),))
         try:
             AssetModule.SetCustomAssetName(node, name)
         finally:
@@ -564,7 +683,7 @@ class ImportatomicEditor(QtWidgets.QWidget):
         return
 
     def __popupVersionsItemChosen(self, chosenVersion, meta):
-        item = self.__tree.itemAt(self.__lastTreePos)
+        item = self.tree.itemAt(self.__lastTreePos)
         if item != None:
             itemData = item.getItemData()
             if itemData['type'] == 'assetTree':
@@ -581,7 +700,7 @@ class ImportatomicEditor(QtWidgets.QWidget):
         return
 
     def __popupVersions(self, item, local_pos, global_pos):
-        currentColumnId = self.__tree.columnAt(local_pos.x())
+        currentColumnId = self.tree.columnAt(local_pos.x())
         currentColumnName = self.__headerLabels[currentColumnId]
         if currentColumnName == 'Version':
             itemData = item.getItemData()
@@ -607,12 +726,17 @@ class ImportatomicEditor(QtWidgets.QWidget):
                         return True
         return False
 
+    def __doubleClick(self, model_index):
+        item = self.tree.itemFromIndex(model_index)
+        print "__doubleClick", item
+        return
+
     def __listMousePressEvent(self, event):
-        item = self.__tree.itemAt(event.pos())
+        item = self.tree.itemAt(event.pos())
         if not item:
             return
         pos = event.pos()
-        pos = self.__tree.mapToGlobal(QtCore.QPoint(pos.x(), pos.y() + self.__tree.header().height()))
+        pos = self.tree.mapToGlobal(QtCore.QPoint(pos.x(), pos.y() + self.tree.header().height()))
         self.__lastTreePos = event.pos()
         self.__lastPos = pos
         if event.button() == QtCore.Qt.LeftButton:
@@ -623,19 +747,19 @@ class ImportatomicEditor(QtWidgets.QWidget):
         else:
             if event.button() == QtCore.Qt.RightButton:
                 if item.isSelected():
-                    items = self.__tree.selectedItems()
+                    items = self.tree.selectedItems()
                 else:
                     items = [
                      item]
                 for item in items:
                     dark = QtGui.QColor(32, 32, 32)
                     item.setHiliteColor(dark)
-                    self.__tree.update(self.__tree.indexFromItem(item))
+                    self.tree.update(self.tree.indexFromItem(item))
 
                 menu = QtWidgets.QMenu(None)
                 types = set((i.getItemData()['type'] for i in items))
                 if len(types) > 1:
-                    menu.addAction(RemoveItemsAction(menu, self.__node, items))
+                    menu.addAction(RemoveItemsAction(menu, self.node, items))
                 else:
                     itemType = tuple(types)[0]
                     if itemType == 'output':
@@ -643,31 +767,31 @@ class ImportatomicEditor(QtWidgets.QWidget):
                             a = menu.addAction('(Default Output Cannot Be Removed)')
                             a.setEnabled(False)
                         else:
-                            menu.addAction(RemoveItemsAction(menu, self.__node, items))
+                            menu.addAction(RemoveItemsAction(menu, self.node, items))
                     else:
                         if itemType == 'assetTree':
                             assetItem = item.getItemData()['assetItem']
                             if assetItem.isIgnorable():
-                                menu.addAction(ToggleIgnoreItemsAction(menu, self.__node, items, not assetItem.isIgnored()))
+                                menu.addAction(ToggleIgnoreItemsAction(menu, self.node, items, not assetItem.isIgnored()))
                             if assetItem.isDeletable():
                                 try:
-                                    menu.addAction(RemoveItemsAction(menu, self.__node, items))
+                                    menu.addAction(RemoveItemsAction(menu, self.node, items))
                                 except Exception as exception:
                                     log.exception('Error adding action to context menu: %s' % str(exception))
 
                             if assetItem.canDuplicate():
                                 try:
-                                    menu.addAction(DuplicateItemAction(menu, self.__node, items))
+                                    menu.addAction(DuplicateItemAction(menu, self.node, items))
                                 except:
                                     import traceback
                                     traceback.print_exc()
 
                             if len(items) == 1:
-                                assetItem.addToContextMenu(menu, self.__node)
+                                assetItem.addToContextMenu(menu, self.node)
                 menu.exec_(pos)
                 for item in items:
                     item.setHiliteColor(None)
-                    self.__tree.update(self.__tree.indexFromItem(item))
+                    self.tree.update(self.tree.indexFromItem(item))
 
                 event.accept()
         return
@@ -682,14 +806,14 @@ class ImportatomicEditor(QtWidgets.QWidget):
         if event.isAccepted():
             return
         if key == QtCore.Qt.Key_Delete:
-            RemoveItemsAction(None, self.__node, self.__tree.selectedItems()).go(True)
+            RemoveItemsAction(None, self.node, self.tree.selectedItems()).go(True)
         else:
             if text == 'd':
-                items = [ x for x in self.__tree.selectedItems() if x.getItemData()['type'] == 'assetTree' and x.getItemData()['assetItem'].isIgnorable()
-                        ]
+                items = [x for x in self.tree.selectedItems() if x.getItemData()['type'] == 'assetTree' and x.getItemData()['assetItem'].isIgnorable()
+                         ]
                 if not items:
                     return
-                ToggleIgnoreItemsAction(None, self.__node, items, not items[0].getItemData()['assetItem'].isIgnored()).go(True)
+                ToggleIgnoreItemsAction(None, self.node, items, not items[0].getItemData()['assetItem'].isIgnored()).go(True)
         return
 
 
